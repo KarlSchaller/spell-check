@@ -11,10 +11,14 @@ Homework    : Assignment 3 Spell Check
 #include <stdlib.h>
 #include <pthread.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
 
 #define DEFAULT_DICTIONARY "dictionary.txt"
-#define DEFAULT_PORT 8888
+#define DEFAULT_PORT 8080
+#define MAX_CLIENTS 32
 #define NUM_WORKERS 32
+
 //127.0.0.1
 
 int search(int n, char dict[][n], char *key);
@@ -23,6 +27,7 @@ void* loggerfunction(void *args);
 
 int main(int argc, char **argv, char** envp) {
 	
+	// DICTIONARY =========================================================
 	// Open dictionary file
 	FILE *dict;
 	if (argc >= 2)
@@ -61,18 +66,65 @@ int main(int argc, char **argv, char** envp) {
 		printf("%s\n", words[line]);
 	printf("%d\n", search(maxlen, words, "aal"));
 	printf("%d\n", search(maxlen, words, "asdfhsfgasc"));
-	
-/*
-	// Open port
-	int server = socket(AF_INET, SOCK_STREAM, 0);
-	if (server < 0) 
-        printf("Error in server creating\n"); 
+	// ====================================================================
+
+
+	// SOCKET =============================================================
+	// Create socket and listen
+	int serverfd = socket(AF_INET, SOCK_STREAM, 0); // create socket
+	if (serverfd < 0) {
+        perror("Socket Error"); 
+		exit(EXIT_FAILURE);
+	}
     else
-        printf("Server Created\n");
+        puts("Socket");
+	struct sockaddr_in address; // create address
+	address.sin_family = AF_INET;
+	address.sin_addr.s_addr = INADDR_ANY;
 	if (argc >= 3)
-		puts("opening port"); // open argv[2]
+		address.sin_port = htons(atoi(argv[2])); // port argv[2]
 	else
-		puts("opening port"); // open DEFAULT_PORT
+		address.sin_port = htons(DEFAULT_PORT); // port DEFAULT_PORT
+	if (bind(serverfd, (struct sockaddr *)&address, sizeof(address)) < 0) { // bind
+        perror("Bind Error");
+		exit(EXIT_FAILURE);
+	}
+	else
+		puts("Bind");
+	if (listen(serverfd, MAX_CLIENTS) < 0) { // listen
+        perror("Listen Error"); 
+        exit(EXIT_FAILURE); 
+    }
+	else
+		puts("Listen");
+	// ====================================================================
+	
+/*	
+	// THREADS ============================================================
+	// Create logger thread
+	p_thread loggerthread;
+	pthread_create(&loggerthread, NULL, loggerfunction, NULL);
+	
+	// Create worker threads
+	p_thread workerthreads[NUM_WORKERS];
+	for (int i = 0; i < NUM_WORKERS; i++)
+		pthread_create(workerthreads[i], NULL, workerfunction, NULL);
+	
+	// Main thread
+	int addrlen = sizeof(struct sockaddr_in);
+    if ((newsocket = accept(serverfd, (struct sockaddr *)&address, (socklen_t*)&addrlen)) < 0) { 
+        perror("Accept Error");
+        exit(EXIT_FAILURE); 
+    }
+	else
+		puts("Accept");
+    valread = read( new_socket , buffer, 1024); 
+    printf("%s\n",buffer ); 
+    send(new_socket , hello , strlen(hello) , 0 ); 
+    printf("Hello message sent\n");
+	
+	
+
 	
 	//The main thread creates a pool of NUM_WORKERS worker threads, and 
 	//then immediately begins to behave in the following manner(to accept 
@@ -90,16 +142,9 @@ int main(int argc, char **argv, char** envp) {
 		add connected_socket to the work queue;
 		signal any sleeping workers that there's a new socket in the queue;
 	}
-
-	// Create logger thread
-	p_thread loggerthread;
-	pthread_create(&loggerthread, NULL, loggerfunction, NULL);
-	
-	// Create worker threads
-	p_thread workerthreads[NUM_WORKERS];
-	for (int i = 0; i < NUM_WORKERS; i++)
-		pthread_create(workerthreads[i], NULL, workerfunction, NULL);
 */
+	// ====================================================================
+	
 	exit(0);
 }
 
