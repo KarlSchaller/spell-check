@@ -13,6 +13,7 @@ Homework    : Assignment 3 Spell Check
 #include <string.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
+#include <stdbool.h>
 
 #define DEFAULT_DICTIONARY "dictionary.txt"
 #define DEFAULT_PORT 8080
@@ -24,18 +25,22 @@ Homework    : Assignment 3 Spell Check
 struct Entry {
 	char *word;
 	bool correctness;
-}
+};
 
 struct Queue { 
     int front, rear, size; 
     unsigned capacity; 
-    void *array; 
-} logqueue, workqueue;
+    void **array;
+	size_t memsize;
+} *workqueue, *logqueue;
+
+char **words;
+int maxlen = 1, lines = 2;
   
-struct Queue *createQueue(unsigned capacity);
-void enqueue(struct Queue *queue, void item);
-void dequeue(struct Queue *queue);
-int search(int n, char dict[][n], char *key);
+struct Queue *createqueue(unsigned capacity, size_t memsize);
+void enqueue(struct Queue *queue, void *item);
+void *dequeue(struct Queue *queue);
+bool search(char **dict, char *key);
 void *workerfunction(void *args);
 void *loggerfunction(void *args);
 
@@ -52,7 +57,6 @@ int main(int argc, char **argv, char** envp) {
 		perror("Could not open dictionary");
 	
 	// Initialize array of words from dictionary file
-	int maxlen = 1, lines = 2;
 	while (!feof(dict)) {
 		int len = 1;
 		while (!feof(dict) && getc(dict) != '\n')
@@ -61,7 +65,9 @@ int main(int argc, char **argv, char** envp) {
 			maxlen = len;
 		lines++;
 	}
-	char words[lines][maxlen];
+	words = (char **)malloc(lines * sizeof(char *));
+	for (int i = 0; i < lines; i++)
+		words[i] = (char *)malloc(maxlen * sizeof(char));
 	
 	// Fill array of words
 	rewind(dict);
@@ -78,8 +84,8 @@ int main(int argc, char **argv, char** envp) {
 	// Print dictionary
 	for (line = 0; words[line][0] != '\0'; line++)
 		printf("%s\n", words[line]);
-	printf("%d\n", search(maxlen, words, "aal"));
-	printf("%d\n", search(maxlen, words, "asdfhsfgasc"));
+	printf("%d\n", search(words, "aal"));
+	printf("%d\n", search(words, "asdfhsfgasc"));
 	// ====================================================================
 
 
@@ -121,6 +127,10 @@ int main(int argc, char **argv, char** envp) {
 	
 	
 	// THREADS ============================================================
+	workqueue = createqueue(MAX_CLIENTS, sizeof(int));
+	logqueue = createqueue(MAX_CLIENTS, sizeof(struct Entry));
+	
+	/*
 	// Create worker threads
 	p_thread workerthreads[NUM_WORKERS];
 	for (int i = 0; i < NUM_WORKERS; i++)
@@ -141,10 +151,10 @@ int main(int argc, char **argv, char** envp) {
 		else
 			puts("Accept");
 		//To create a thread: pthread_create(&name, NULL, methodName, NULL);
-		enqueue(&workqueue, newsocket);
+		enqueue(workqueue, newsocket);
 		//signal any sleeping workers that there's a new socket in the queue;
 		printf("After accept call on newsocket # %d\n",newSocket);
-	}
+	}*/
 	/*
     valread = read( new_socket , buffer, 1024); 
     printf("%s\n",buffer ); 
@@ -162,60 +172,66 @@ int main(int argc, char **argv, char** envp) {
 	*/
 	// ====================================================================
 
-
+/*
 	// Join threads   	
-	for (i=0; i < NUM_WORKERS; i++)
+	for (int i = 0; i < NUM_WORKERS; i++)
    		pthread_join(workerthreads[i], NULL);
 	pthread_join(loggerthread, NULL);
-	
+	*/
+	free(words);
+	free(workqueue);
+	free(logqueue);
 	exit(0);
 }
 
-struct Queue *createQueue(unsigned capacity) {
+struct Queue *createqueue(unsigned capacity, size_t memsize) {
     struct Queue *queue = (struct Queue *) malloc(sizeof(struct Queue)); 
     queue->capacity = capacity; 
+	queue->memsize = memsize;
     queue->front = queue->size = 0;  
     queue->rear = capacity - 1;
-    queue->array = (int *) malloc(queue->capacity * sizeof(int)); 
+    queue->array = (void **) malloc(queue->capacity * memsize); 
     return queue;
 } 
   
-void enqueue(struct Queue *queue, void item) { 
+void enqueue(struct Queue *queue, void *item) { 
     if (queue->size == queue->capacity) 
-        return; 
+        return;
     queue->rear = (queue->rear + 1)%queue->capacity; 
-    queue->array[queue->rear] = item; 
+    memcpy(queue->array[queue->rear], item, queue->memsize);
+	//queue->array[queue->rear] = item; 
     queue->size = queue->size + 1; 
-    printf("%d enqueued to queue\n", item); 
+    puts("Enqueued"); 
 }
 
-void dequeue(struct Queue *queue) {
+void *dequeue(struct Queue *queue) {
     if (queue->size == 0) 
-        return INT_MIN;
-    int item = queue->array[queue->front]; 
+        return NULL;
+    void *item = queue->array[queue->front]; 
     queue->front = (queue->front + 1)%queue->capacity; 
     queue->size = queue->size - 1; 
     return item; 
 }
 
 // Search dict for key
-bool search(int n, char dict[][n], char *key) {
+bool search(char **dict, char *key) {
 	for (int i = 0; dict[i][0] != '\0'; i++) {
 		if (strcmp(dict[i], key) == 0)
 			return 1;
 	}
 	return 0;
 }
-
+/*
 //A server worker thread's main loop is as follows:
 void* workerfunction(void *args) {
 	while (1) {
-		while (workqueue.size > 0) {
-			int newsocket = dequeue(&workqueue);
+		while (workqueue->size > 0) {
+			int newsocket = dequeue(workqueue);
 			notify that there's an empty spot in the queue
 			service client
 			//and the client servicing logic is:
 			while (there's a word left to read) {
+				buffer
 				read word from the socket
 				if (the word is in the dictionary) {
 					echo the word back on the socket concatenated with "OK";
@@ -224,7 +240,7 @@ void* workerfunction(void *args) {
 					echo the word back on the socket concatenated with "MISSPELLED";
 				}
 				struct Entry newentry = {}
-				enqueue(&logqueue, Entry);
+				enqueue(logqueue, Entry);
 				write the word and the socket response value (“OK” or “MISSPELLED”) to the log queue;
 			}
 			close socket
@@ -241,10 +257,10 @@ void* loggerfunction(void *args) {
 		exit(EXIT_FAILURE);
 	}
 	while (1) {
-		while (logqueue.size > 0) {
-			struct Entry newentry = dequeue(&logqueue);
+		while (logqueue->size > 0) {
+			struct Entry newentry = dequeue(logqueue);
 			fprintf(log, "%s %d", newentry.word, newentry.correctness);
 		}
 	}
 	fclose(log);
-}
+}*/
