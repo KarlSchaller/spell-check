@@ -14,9 +14,10 @@ Homework    : Assignment 3 Spell Check
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <stdbool.h>
+#include <unistd.h>
 
 #define DEFAULT_DICTIONARY "dictionary.txt"
-#define DEFAULT_PORT 8080
+#define DEFAULT_PORT 8888
 #define MAX_CLIENTS 32
 #define NUM_WORKERS 4
 
@@ -34,12 +35,13 @@ struct Queue {
 	size_t memsize;
 } *workqueue, *logqueue;
 
+pthread_mutex_t workmutex, logmutex;
 char **words;
 int maxlen = 1, lines = 2;
   
 struct Queue *createqueue(unsigned capacity, size_t memsize);
 void enqueue(struct Queue *queue, void *item);
-void *dequeue(struct Queue *queue);
+void dequeue(struct Queue *queue, void *dest);
 bool search(char **dict, char *key);
 void *workerfunction(void *args);
 void *loggerfunction(void *args);
@@ -130,14 +132,20 @@ int main(int argc, char **argv, char** envp) {
 	workqueue = createqueue(MAX_CLIENTS, sizeof(int));
 	logqueue = createqueue(MAX_CLIENTS, sizeof(struct Entry));
 	
-	/*
+	int i = 1;
+	enqueue(workqueue, &i);
+	enqueue(workqueue, &i);
+	dequeue(workqueue, &i);
+	dequeue(workqueue, &i);
+	puts("done");
+	
 	// Create worker threads
-	p_thread workerthreads[NUM_WORKERS];
+	pthread_t workerthreads[NUM_WORKERS];
 	for (int i = 0; i < NUM_WORKERS; i++)
-		pthread_create(workerthreads[i], NULL, workerfunction, NULL);
+		pthread_create(&(workerthreads[i]), NULL, workerfunction, NULL);
 	
 	// Create logger thread
-	p_thread loggerthread;
+	pthread_t loggerthread;
 	pthread_create(&loggerthread, NULL, loggerfunction, NULL);
 	
 	// Main thread
@@ -150,17 +158,12 @@ int main(int argc, char **argv, char** envp) {
 		}
 		else
 			puts("Accept");
-		//To create a thread: pthread_create(&name, NULL, methodName, NULL);
-		enqueue(workqueue, newsocket);
+		pthread_mutex_lock(&workmutex);
+		enqueue(workqueue, &newsocket);
+		pthread_mutex_unlock(&workmutex);
 		//signal any sleeping workers that there's a new socket in the queue;
-		printf("After accept call on newsocket # %d\n",newSocket);
-	}*/
-	/*
-    valread = read( new_socket , buffer, 1024); 
-    printf("%s\n",buffer ); 
-    send(new_socket , hello , strlen(hello) , 0 ); 
-    printf("Hello message sent\n");
-	*/
+		printf("After accept call on newsocket # %d\n", newsocket);
+	}
 	/*
 	pthread_mutex_t name;
 	pthread_mutex_lock(&name);
@@ -172,12 +175,13 @@ int main(int argc, char **argv, char** envp) {
 	*/
 	// ====================================================================
 
-/*
+
 	// Join threads   	
 	for (int i = 0; i < NUM_WORKERS; i++)
    		pthread_join(workerthreads[i], NULL);
 	pthread_join(loggerthread, NULL);
-	*/
+	
+	close(serverfd);
 	free(words);
 	free(workqueue);
 	free(logqueue);
@@ -190,27 +194,30 @@ struct Queue *createqueue(unsigned capacity, size_t memsize) {
 	queue->memsize = memsize;
     queue->front = queue->size = 0;  
     queue->rear = capacity - 1;
-    queue->array = (void **) malloc(queue->capacity * memsize); 
+    queue->array = malloc(queue->capacity * sizeof(void *));
+	for (int i = 0; i < capacity; i++)
+		queue->array[i] = malloc(memsize);
     return queue;
-} 
-  
+}
+
 void enqueue(struct Queue *queue, void *item) { 
     if (queue->size == queue->capacity) 
         return;
-    queue->rear = (queue->rear + 1)%queue->capacity; 
+    queue->rear = (queue->rear + 1)%queue->capacity;
     memcpy(queue->array[queue->rear], item, queue->memsize);
 	//queue->array[queue->rear] = item; 
     queue->size = queue->size + 1; 
     puts("Enqueued"); 
 }
 
-void *dequeue(struct Queue *queue) {
+void dequeue(struct Queue *queue, void *dest) {
     if (queue->size == 0) 
-        return NULL;
+        return;
     void *item = queue->array[queue->front]; 
     queue->front = (queue->front + 1)%queue->capacity; 
     queue->size = queue->size - 1; 
-    return item; 
+    memcpy(dest, item, queue->memsize);
+	//return item;
 }
 
 // Search dict for key
@@ -221,36 +228,38 @@ bool search(char **dict, char *key) {
 	}
 	return 0;
 }
-/*
+
 //A server worker thread's main loop is as follows:
-void* workerfunction(void *args) {
+void *workerfunction(void *args) {
 	while (1) {
 		while (workqueue->size > 0) {
-			int newsocket = dequeue(workqueue);
-			notify that there's an empty spot in the queue
-			service client
-			//and the client servicing logic is:
-			while (there's a word left to read) {
-				buffer
-				read word from the socket
-				if (the word is in the dictionary) {
-					echo the word back on the socket concatenated with "OK";
-				}
-				else {
-					echo the word back on the socket concatenated with "MISSPELLED";
-				}
-				struct Entry newentry = {}
-				enqueue(logqueue, Entry);
-				write the word and the socket response value (“OK” or “MISSPELLED”) to the log queue;
+			int newsocket;
+			pthread_mutex_lock(&workmutex);
+			dequeue(workqueue, &newsocket);
+			pthread_mutex_unlock(&workmutex);
+			//notify that there's an empty spot in the queue
+			int numbytes = 1;
+			while (numbytes > 0) {
+				struct Entry newentry;
+				char buffer[1024];
+				read(newsocket, buffer, 1024); //read word from the socket
+				strcpy(newentry.word, buffer);
+				if (newentry.correctness = search(words, buffer))
+					write(newsocket, strcat(buffer, "OK"), strlen(buffer)+3);
+				else
+					write(newsocket, strcat(buffer, "MISSPELLED"), strlen(buffer)+11);
+				pthread_mutex_lock(&logmutex);
+				enqueue(logqueue, &newentry);
+				pthread_mutex_unlock(&logmutex);
 			}
-			close socket
+			close(newsocket);
 		}
 	}
 }
 
 //A second server thread will monitor a log queue and process entries 
 //by removing and writing them to a log file.
-void* loggerfunction(void *args) {
+void *loggerfunction(void *args) {
 	FILE *log = fopen("log.txt", "w");
 	if (!log) {
 		perror("Log File Error:");
@@ -258,9 +267,12 @@ void* loggerfunction(void *args) {
 	}
 	while (1) {
 		while (logqueue->size > 0) {
-			struct Entry newentry = dequeue(logqueue);
-			fprintf(log, "%s %d", newentry.word, newentry.correctness);
+			struct Entry newentry;
+			pthread_mutex_lock(&logmutex);
+			dequeue(logqueue, &newentry);
+			pthread_mutex_unlock(&logmutex);
+			fprintf(log, newentry.correctness ? "%s OK\n" : "%s MISSPELLED\n", newentry.word);
 		}
 	}
 	fclose(log);
-}*/
+}
