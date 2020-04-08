@@ -15,13 +15,12 @@ Homework    : Assignment 3 Spell Check
 #include <arpa/inet.h>
 #include <stdbool.h>
 #include <unistd.h>
+#include <ctype.h>
 
 #define DEFAULT_DICTIONARY "dictionary.txt"
 #define DEFAULT_PORT 8888
 #define MAX_CLIENTS 32
 #define NUM_WORKERS 4
-
-//127.0.0.1
 
 struct Entry {
 	char *word;
@@ -36,13 +35,17 @@ struct Queue {
 } *workqueue, *logqueue;
 
 pthread_mutex_t workmutex, logmutex;
+pthread_cond_t worknotempty, lognotempty, worknotfull, lognotfull;
 char **words;
 int maxlen = 1, lines = 2;
   
 struct Queue *createqueue(unsigned capacity, size_t memsize);
+int isfull(struct Queue *queue);
+int isempty(struct Queue *queue);
 void enqueue(struct Queue *queue, void *item);
 void dequeue(struct Queue *queue, void *dest);
 bool search(char **dict, char *key);
+void alphnum(char *str);
 void *workerfunction(void *args);
 void *loggerfunction(void *args);
 
@@ -93,7 +96,7 @@ int main(int argc, char **argv, char** envp) {
 
 	// SOCKET =============================================================
 	// Socket
-	int serverfd = socket(AF_INET, SOCK_STREAM, 0); // create socket
+	int serverfd = socket(AF_INET, SOCK_STREAM, 0);
 	if (serverfd < 0) {
         perror("Socket Error"); 
 		exit(EXIT_FAILURE);
@@ -104,22 +107,22 @@ int main(int argc, char **argv, char** envp) {
 	// Address
 	struct sockaddr_in address;
 	address.sin_family = AF_INET;
-	address.sin_addr.s_addr = INADDR_ANY;
+	address.sin_addr.s_addr = INADDR_ANY; // 127.0.0.1
 	if (argc >= 3)
 		address.sin_port = htons(atoi(argv[2]));
 	else
 		address.sin_port = htons(DEFAULT_PORT);
 	
 	// Bind
-	if (bind(serverfd, (struct sockaddr *)&address, sizeof(address)) < 0) { // bind
+	if (bind(serverfd, (struct sockaddr *)&address, sizeof(address)) < 0) {
         perror("Bind Error");
 		exit(EXIT_FAILURE);
 	}
 	else
 		puts("Bind");
 	
-	// List
-	if (listen(serverfd, MAX_CLIENTS) < 0) { // listen
+	// Listen
+	if (listen(serverfd, MAX_CLIENTS) < 0) {
         perror("Listen Error"); 
         exit(EXIT_FAILURE); 
     }
@@ -131,48 +134,50 @@ int main(int argc, char **argv, char** envp) {
 	// THREADS ============================================================
 	workqueue = createqueue(MAX_CLIENTS, sizeof(int));
 	logqueue = createqueue(MAX_CLIENTS, sizeof(struct Entry));
+	pthread_mutex_init(&workmutex, NULL);
+	pthread_mutex_init(&logmutex, NULL);
+	pthread_cond_init(&worknotempty, NULL);
+	pthread_cond_init(&lognotempty, NULL);
+	pthread_cond_init(&worknotfull, NULL);
+	pthread_cond_init(&lognotfull, NULL);
 	
-	int i = 1;
+	/*int i = 1;
 	enqueue(workqueue, &i);
 	enqueue(workqueue, &i);
 	dequeue(workqueue, &i);
 	dequeue(workqueue, &i);
-	puts("done");
+	puts("done");*/
 	
 	// Create worker threads
 	pthread_t workerthreads[NUM_WORKERS];
 	for (int i = 0; i < NUM_WORKERS; i++)
 		pthread_create(&(workerthreads[i]), NULL, workerfunction, NULL);
+	puts("Workers");
 	
 	// Create logger thread
 	pthread_t loggerthread;
 	pthread_create(&loggerthread, NULL, loggerfunction, NULL);
+	puts("Logger");
 	
 	// Main thread
 	int addrlen = sizeof(struct sockaddr_in);
 	while (1) {
 		int newsocket;
-		if ((newsocket = accept(serverfd, (struct sockaddr *)&address, (socklen_t*)&addrlen)) < 0) { 
+		if ((newsocket = accept(serverfd, (struct sockaddr *)&address, (socklen_t *)&addrlen)) < 0) { 
 			perror("Accept Error");
 			exit(EXIT_FAILURE); 
 		}
 		else
-			puts("Accept");
+			puts("Main: Accept");
+		puts("Main: Before connection enqueue");
 		pthread_mutex_lock(&workmutex);
+		while (isfull(workqueue))
+			pthread_cond_wait(&worknotfull, &workmutex);
 		enqueue(workqueue, &newsocket);
+		puts("Main: After connection enqueue");
 		pthread_mutex_unlock(&workmutex);
-		//signal any sleeping workers that there's a new socket in the queue;
-		printf("After accept call on newsocket # %d\n", newsocket);
+		pthread_cond_signal(&worknotempty);
 	}
-	/*
-	pthread_mutex_t name;
-	pthread_mutex_lock(&name);
-	pthread_mutex_unlock(&name);
-	pthread_cond_t name;
-	pthread_cond_init(&name, NULL);
-	pthread_cond_wait(&name, &mutexName);
-	pthread_cond_signal(&name);
-	*/
 	// ====================================================================
 
 
@@ -200,24 +205,27 @@ struct Queue *createqueue(unsigned capacity, size_t memsize) {
     return queue;
 }
 
+int isfull(struct Queue *queue) { return (queue->size == queue->capacity); } 
+  
+int isempty(struct Queue *queue) { return (queue->size == 0); } 
+
 void enqueue(struct Queue *queue, void *item) { 
-    if (queue->size == queue->capacity) 
+    if (isfull(queue)) 
         return;
     queue->rear = (queue->rear + 1)%queue->capacity;
     memcpy(queue->array[queue->rear], item, queue->memsize);
-	//queue->array[queue->rear] = item; 
     queue->size = queue->size + 1; 
-    puts("Enqueued"); 
+    //puts("Enqueued"); 
 }
 
 void dequeue(struct Queue *queue, void *dest) {
-    if (queue->size == 0) 
+    if (isempty(queue)) 
         return;
     void *item = queue->array[queue->front]; 
     queue->front = (queue->front + 1)%queue->capacity; 
     queue->size = queue->size - 1; 
     memcpy(dest, item, queue->memsize);
-	//return item;
+	//puts("Dequeued");
 }
 
 // Search dict for key
@@ -229,31 +237,58 @@ bool search(char **dict, char *key) {
 	return 0;
 }
 
+// Remove all non-alphanumeric characters from str
+void alphnum(char *str) {
+	int i = 0, j = 0;
+	char c;
+	while ((c = str[i++]) != '\0') {
+		if (isalnum(c))
+			str[j++] = c;
+	}
+	str[j] = '\0';
+}
+
 //A server worker thread's main loop is as follows:
 void *workerfunction(void *args) {
 	while (1) {
-		while (workqueue->size > 0) {
-			int newsocket;
-			pthread_mutex_lock(&workmutex);
-			dequeue(workqueue, &newsocket);
-			pthread_mutex_unlock(&workmutex);
-			//notify that there's an empty spot in the queue
-			int numbytes = 1;
-			while (numbytes > 0) {
-				struct Entry newentry;
-				char buffer[1024];
-				read(newsocket, buffer, 1024); //read word from the socket
-				strcpy(newentry.word, buffer);
-				if (newentry.correctness = search(words, buffer))
-					write(newsocket, strcat(buffer, "OK"), strlen(buffer)+3);
-				else
-					write(newsocket, strcat(buffer, "MISSPELLED"), strlen(buffer)+11);
-				pthread_mutex_lock(&logmutex);
-				enqueue(logqueue, &newentry);
-				pthread_mutex_unlock(&logmutex);
-			}
-			close(newsocket);
+		int newsocket;
+		puts("Work: Before connection dequeue");
+		pthread_mutex_lock(&workmutex);
+		while (isempty(workqueue))
+			pthread_cond_wait(&worknotempty, &workmutex);
+		dequeue(workqueue, &newsocket);
+		puts("Work: After connection dequeue");
+		pthread_mutex_unlock(&workmutex);
+		pthread_cond_signal(&worknotfull);
+		int numbytes = 1;
+		while (numbytes > 0) {
+			struct Entry newentry;
+			char *buf = (char *)calloc(1024, sizeof(char));
+			puts("Work: Before read");
+			numbytes = read(newsocket, buf, 1024); //read word from the socket
+			puts("Work: After read");
+			alphnum(buf);
+			//buf[strlen(buf)-2] = '\0';
+			newentry.word = (char *)malloc((strlen(buf)+1)*sizeof(char));
+			strcpy(newentry.word, buf);
+			puts("Work: After strcpy");
+			printf("Work: word \"%s\"\n", buf);
+			printf("Work: correctness \"%d\"\n", search(words, buf)); //debug
+			if (newentry.correctness = search(words, buf))
+				write(newsocket, strcat(buf, "OK\n"), strlen(buf)+4);
+			else
+				write(newsocket, strcat(buf, "MISSPELLED\n"), strlen(buf)+12);
+			puts("Work: Before log enqueue");
+			pthread_mutex_lock(&logmutex);
+			while (isfull(logqueue))
+				pthread_cond_wait(&lognotfull, &logmutex);
+			enqueue(logqueue, &newentry);
+			puts("Work: After log enqueue");
+			pthread_mutex_unlock(&logmutex);
+			pthread_cond_signal(&lognotempty);
+			free(buf);
 		}
+		close(newsocket);
 	}
 }
 
@@ -262,17 +297,29 @@ void *workerfunction(void *args) {
 void *loggerfunction(void *args) {
 	FILE *log = fopen("log.txt", "w");
 	if (!log) {
-		perror("Log File Error:");
+		perror("Log: Log File Error:");
 		exit(EXIT_FAILURE);
 	}
+	else
+		puts("Log: Log opened");
 	while (1) {
-		while (logqueue->size > 0) {
-			struct Entry newentry;
-			pthread_mutex_lock(&logmutex);
-			dequeue(logqueue, &newentry);
-			pthread_mutex_unlock(&logmutex);
-			fprintf(log, newentry.correctness ? "%s OK\n" : "%s MISSPELLED\n", newentry.word);
-		}
+		struct Entry newentry;
+		puts("Log: Before log dequeue");
+		pthread_mutex_lock(&logmutex);
+		while (isempty(logqueue))
+			pthread_cond_wait(&lognotempty, &logmutex);
+		dequeue(logqueue, &newentry);
+		puts("Log: After log dequeue");
+		pthread_mutex_unlock(&logmutex);
+		pthread_cond_signal(&lognotfull);
+		printf("Log: word \"%s\"\n", newentry.word);
+		printf("Log: correctness \"%d\"\n", newentry.correctness);
+		if (newentry.correctness)
+			fprintf(log, "%s OK\n", newentry.word);
+		else
+			fprintf(log, "%s MISSPELLED\n", newentry.word);
+		puts("Log: Wrote log");
+		free(newentry.word);
 	}
 	fclose(log);
 }
