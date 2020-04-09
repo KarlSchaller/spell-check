@@ -19,7 +19,7 @@ Homework    : Assignment 3 Spell Check
 
 #define DEFAULT_DICTIONARY "dictionary.txt"
 #define DEFAULT_PORT 8888
-#define MAX_CLIENTS 32
+#define MAX_CLIENTS 3
 #define NUM_WORKERS 4
 
 struct Entry {
@@ -85,12 +85,13 @@ int main(int argc, char **argv, char** envp) {
 		line++;
 	}
 	words[line][0] = '\0';
+	puts("Dictionary");
 	
 	// Print dictionary
-	for (line = 0; words[line][0] != '\0'; line++)
+	/*for (line = 0; words[line][0] != '\0'; line++)
 		printf("%s\n", words[line]);
 	printf("%d\n", search(words, "aal"));
-	printf("%d\n", search(words, "asdfhsfgasc"));
+	printf("%d\n", search(words, "asdfhsfgasc"));*/
 	// ====================================================================
 
 
