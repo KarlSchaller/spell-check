@@ -1,0 +1,22 @@
+Karl Schaller, CIS 3207, Project 3
+
+===========================================
+Spell Check Server
+===========================================
+
+This networked spell check server uses sockets and multithreading to service clients. The clients send the server a word and the server searches for the word in a dictionary to tell the client whether the word is spelled properly.
+
+The server can be run with two command line arguments. The first determines the dictionary file. If it is not provided, the server searches for the default dictionary: dictionary.txt. The second determines the port number on which to listen for incoming connections. When not provided, the port defaults to 8888.
+
+When the server starts, the dictionary is read and stored as a global array of words (2D character array). Then, a socket is created and bound to the localhost where the server listens for incoming connections.
+At this point, the server creates a number of worker threads and a logger thread. The worker threads will process the words that are sent to the server and send results on their correctness. These results will be sent to the client and the logger thread which will record them in log.txt.
+Meanwhile, the main thread waits to accept more incoming connections. All incoming connections are processes by adding a socket to the workerqueue. The main thread locks the mutex for the worker queue and waits for the queue to have an open space while it is full, and then adds the socket to the queue, unlocking the mutex and signaling that the queue is not empty.
+
+The worker threads will lock the mutex for the worker queue before waiting for it to be not empty while it is empty, then popping a socket from the queue, unlocking the mutex and signaling that the queue is not full.
+The worker then services the client over this socket, repeatedly reading a word into a buffer, removing all non-alphanumeric characters, then searching for the word in the dictionary. The word is returned to the client concatenated with the result ("OK" or "MISSPELLED").
+This result is also stored into a log entry structure to be added to the log queue. The log mutex is locked, the worker thread waits for the queue to be not full while it is full, the entry is enqueued, the mutex is unlocked, and the thread signals that the queue is not empty.
+
+The logger thread opens log.txt for writing. Then, it repeatedly writes to the log while the program is running. The thread locks the log mutex and waits for the queue to be not empty while it is empty, then dequeues a log entry from the queue, unlocking the mutex and signalling that the queue is not full.
+
+The server includes extensive debugging code to report errors and report the operations of the server to stdin between every queue operations, socket operations, etc. To solve segmentation fault errors, these reports helped identify which sections of the code were incorrect.
+Testing was done with multiple clients connecting to the server and sending words of many different lengths and correctness to ensure the results produced were consistent with the contents of the dictionary.
