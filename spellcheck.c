@@ -160,10 +160,12 @@ int main(int argc, char **argv, char** envp) {
 	puts("Logger");
 	
 	// Main thread
-	int addrlen = sizeof(struct sockaddr_in);
+	struct sockaddr_in client;
+	int clientlen = sizeof(struct sockaddr_in);
 	while (1) {
 		int newsocket;
-		if ((newsocket = accept(serverfd, (struct sockaddr *)&address, (socklen_t *)&addrlen)) < 0) { 
+		//if ((newsocket = accept(serverfd, (struct sockaddr *)&address, (socklen_t *)&addrlen)) < 0) { 
+		if ((newsocket = accept(serverfd, (struct sockaddr *)&client, (socklen_t *)&clientlen)) < 0) { 
 			perror("Accept Error");
 			exit(EXIT_FAILURE); 
 		}
@@ -268,6 +270,8 @@ void *workerfunction(void *args) {
 			numbytes = read(newsocket, buf, 1024); //read word from the socket
 			puts("Work: After read");
 			alphnum(buf);
+			if (buf[0] == '\0')
+				continue;
 			//buf[strlen(buf)-2] = '\0';
 			newentry.word = (char *)malloc((strlen(buf)+1)*sizeof(char));
 			strcpy(newentry.word, buf);
@@ -275,9 +279,9 @@ void *workerfunction(void *args) {
 			printf("Work: word \"%s\"\n", buf);
 			printf("Work: correctness \"%d\"\n", search(words, buf)); //debug
 			if (newentry.correctness = search(words, buf))
-				write(newsocket, strcat(buf, "OK\n"), strlen(buf)+4);
+				write(newsocket, strcat(buf, " OK\n"), strlen(buf)+5);
 			else
-				write(newsocket, strcat(buf, "MISSPELLED\n"), strlen(buf)+12);
+				write(newsocket, strcat(buf, " MISSPELLED\n"), strlen(buf)+13);
 			puts("Work: Before log enqueue");
 			pthread_mutex_lock(&logmutex);
 			while (isfull(logqueue))
@@ -297,7 +301,7 @@ void *workerfunction(void *args) {
 void *loggerfunction(void *args) {
 	FILE *log = fopen("log.txt", "w");
 	if (!log) {
-		perror("Log: Log File Error:");
+		perror("Log: Log File Error");
 		exit(EXIT_FAILURE);
 	}
 	else
@@ -314,10 +318,19 @@ void *loggerfunction(void *args) {
 		pthread_cond_signal(&lognotfull);
 		printf("Log: word \"%s\"\n", newentry.word);
 		printf("Log: correctness \"%d\"\n", newentry.correctness);
-		if (newentry.correctness)
-			fprintf(log, "%s OK\n", newentry.word);
-		else
-			fprintf(log, "%s MISSPELLED\n", newentry.word);
+		if (newentry.correctness) {
+			if (fprintf(log, "%s OK\n", newentry.word) < 0)
+				puts("Log: Write error");
+			else
+				puts("Log: OK");
+		}
+		else {
+			if (fprintf(log, "%s MISSPELLED\n", newentry.word) < 0)
+				puts("Log: Write error");
+			else
+				puts("Log: MISSPELLED");
+		}
+		fflush(log);
 		puts("Log: Wrote log");
 		free(newentry.word);
 	}
